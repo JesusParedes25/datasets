@@ -1,69 +1,74 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[20]:
+# In[2]:
 
+
+#!/usr/bin/env python
+# coding: utf-8
 
 import pandas as pd
 import folium
 import streamlit as st
 from streamlit_folium import st_folium
 import json
+from folium.plugins import MarkerCluster
 
-# Leer CSV desde GitHub
-url_csv = "https://raw.githubusercontent.com/JesusParedes25/datasets/refs/heads/main/data1.xls"
-df_original = pd.read_csv(url_csv)
-
-# Leer GeoJSON de municipios
-geojson_path = "Municipios.geojson"
-with open(geojson_path, encoding="utf-8") as f:
-    municipios_geojson = json.load(f)
-
-# Flatten sucursales
-max_atencion = 85
-registros = []
-
-for _, row in df_original.iterrows():
-    for i in range(max_atencion):
-        direccion_col = f"atencion[{i}].direccion"
-        coord_x_col = f"atencion[{i}].coordenadas.coordinates[0]"
-        coord_y_col = f"atencion[{i}].coordenadas.coordinates[1]"
-
-        if pd.notna(row.get(direccion_col)):
-            registros.append({
-                "direccion": row[direccion_col],
-                "coordenada_x": row.get(coord_x_col),
-                "coordenada_y": row.get(coord_y_col),
-                "nombre": row["nombre"],
-                "secretaria": row["secretaria.nombre"],
-                "dependencia": row["dependencia.nombre"]
-            })
-
-df_limpio = pd.DataFrame(registros)
-
-# Agrupación final
-df_grouped = df_limpio.groupby(
-    ['coordenada_x', 'coordenada_y', 'secretaria', 'dependencia']
-).agg({
-    'direccion': lambda x: x.mode().iloc[0] if not x.mode().empty else x.iloc[0],
-    'nombre': lambda x: list(set(x))
-}).reset_index()
-
-# Diccionario de colores por Secretaría (puedes ampliar este diccionario)
-secretaria_colores = {
-    'Secretaría de Gobierno': 'blue',
-    'Secretaría de Contraloría': 'green',
-    'Organismos No Sectorizados': 'orange',
-    'Secretaría de Infraestructura Pública y Desarrollo Urbano Sostenible': 'purple',
-    'Secretaría de Finanzas Públicas': 'red'
-}
-
-# Streamlit config
+# Configuración inicial de Streamlit
 st.set_page_config(page_title="SIG de Trámites", layout="wide")
-
 st.title("🗺️ Plataforma Interactiva de Trámites y Sucursales")
 
-# Filtros
+# ------------------- CACHE ---------------------
+
+@st.cache_data
+def cargar_csv(url_csv):
+    return pd.read_csv(url_csv)
+
+@st.cache_data
+def procesar_datos(df_original):
+    max_atencion = 85
+    registros = []
+
+    for _, row in df_original.iterrows():
+        for i in range(max_atencion):
+            direccion_col = f"atencion[{i}].direccion"
+            coord_x_col = f"atencion[{i}].coordenadas.coordinates[0]"
+            coord_y_col = f"atencion[{i}].coordenadas.coordinates[1]"
+
+            if pd.notna(row.get(direccion_col)):
+                registros.append({
+                    "direccion": row[direccion_col],
+                    "coordenada_x": row.get(coord_x_col),
+                    "coordenada_y": row.get(coord_y_col),
+                    "nombre": row["nombre"],
+                    "secretaria": row["secretaria.nombre"],
+                    "dependencia": row["dependencia.nombre"]
+                })
+
+    df_limpio = pd.DataFrame(registros)
+    df_grouped = df_limpio.groupby(
+        ['coordenada_x', 'coordenada_y', 'secretaria', 'dependencia']
+    ).agg({
+        'direccion': lambda x: x.mode().iloc[0] if not x.mode().empty else x.iloc[0],
+        'nombre': lambda x: list(set(x))
+    }).reset_index()
+
+    return df_grouped
+
+@st.cache_data
+def cargar_geojson(path):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+# ------------------- CARGA DE DATOS ---------------------
+
+url_csv = "https://raw.githubusercontent.com/JesusParedes25/datasets/refs/heads/main/data1.xls"
+df_original = cargar_csv(url_csv)
+df_grouped = procesar_datos(df_original)
+geojson_path = "Municipios.geojson"
+municipios_geojson = cargar_geojson(geojson_path)
+
+# ------------------- FILTROS ---------------------
 
 municipios = sorted([feat['properties']['NOMGEO'] for feat in municipios_geojson['features']])
 municipio_sel = st.sidebar.selectbox("Municipio", ["Todos"] + municipios)
@@ -97,7 +102,12 @@ if dependencia_sel != "Todas":
 if tramite_sel != "Todos":
     df_final = df_final[df_final['nombre'].apply(lambda x: tramite_sel in x)]
 
-# Exportador de resultados filtrados
+solo_pachuca = st.sidebar.checkbox("Mostrar solo Pachuca De Soto")
+
+if solo_pachuca:
+    df_final = df_final[df_final['direccion'].str.contains("Pachuca De Soto", na=False)]
+
+# Exportador
 st.sidebar.download_button(
     label="Descargar datos filtrados",
     data=df_final.to_csv(index=False).encode('utf-8'),
@@ -105,11 +115,12 @@ st.sidebar.download_button(
     mime='text/csv'
 )
 
-# Mapa principal
+# ------------------- MAPA ---------------------
+
 pachuca_coords = [20.1011, -98.7591]
 m = folium.Map(location=pachuca_coords, zoom_start=10)
 
-# Municipios
+# Dibujar municipios
 for feature in municipios_geojson['features']:
     nombre_municipio = feature['properties']['NOMGEO']
     if municipio_sel == "Todos" or municipio_sel == nombre_municipio:
@@ -128,31 +139,53 @@ for feature in municipios_geojson['features']:
             }
         ).add_to(m)
 
-# Marcadores
+# Diccionario de colores por Secretaría
+secretaria_colores = {
+    'Secretaría de Gobierno': 'blue',
+    'Secretaría de Contraloría': 'green',
+    'Organismos No Sectorizados': 'orange',
+    'Secretaría de Infraestructura Pública y Desarrollo Urbano Sostenible': 'purple',
+    'Secretaría de Finanzas Públicas': 'red'
+}
+
+# MarkerCluster
+marker_cluster = MarkerCluster().add_to(m)
+
+# ------------------- MARCADORES ---------------------
+
 for _, row in df_final.iterrows():
     try:
         lat = float(row['coordenada_y'])
         lon = float(row['coordenada_x'])
-        tramites = "<br>".join(row['nombre'])
         color = secretaria_colores.get(row['secretaria'], "cadetblue")
 
+        # Popup modernizado institucional
         popup_html = f"""
-        <div style="font-family: Arial; font-size: 13px;">
-            <b>Dirección:</b> {row['direccion']}<br><br>
-            <b>Trámites:</b><br>{tramites}<br>
-            <b>Secretaría:</b> {row['secretaria']}<br>
-            <b>Dependencia:</b> {row['dependencia']}
+        <div style="font-family: Arial, sans-serif; font-size: 13px; width: 320px; border: 1px solid #cccccc; border-radius: 8px; box-shadow: 2px 2px 5px rgba(0,0,0,0.3);">
+            <div style="background-color:#9f2241; color:white; padding:8px; border-top-left-radius:8px; border-top-right-radius:8px;">
+                Información del Punto de Atención
+            </div>
+            <div style="padding: 10px;">
+                <b>Secretaría:</b><br> {row['secretaria']}<br><br>
+                <b>Dependencia:</b><br> {row['dependencia']}<br><br>
+                <b>Dirección:</b><br> {row['direccion']}<br><br>
+                <b>Trámites:</b>
+                <ul style="padding-left:20px; margin:0;">
+                    {''.join(f'<li>{t}</li>' for t in row['nombre'])}
+                </ul>
+            </div>
         </div>
         """
+
         folium.Marker(
             location=[lat, lon],
             popup=folium.Popup(popup_html, max_width=400),
             icon=folium.Icon(color=color, icon="info-sign")
-        ).add_to(m)
+        ).add_to(marker_cluster)
     except Exception as e:
         print(f"Error: {e}")
 
-# Mostrar mapa a pantalla completa
+# Mostrar mapa sin rerender en movimiento:
 st_folium(m, use_container_width=True, height=800)
 
 
