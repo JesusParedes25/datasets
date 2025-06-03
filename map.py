@@ -1,12 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[2]:
-
-
-#!/usr/bin/env python
-# coding: utf-8
-
 import pandas as pd
 import folium
 import streamlit as st
@@ -186,16 +180,3 @@ for _, row in df_final.iterrows():
 
 # Mostrar mapa sin rerender en movimiento:
 st_folium(m, use_container_width=True, height=800)
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
